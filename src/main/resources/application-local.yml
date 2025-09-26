@@ -1,0 +1,11 @@
+spring:
+  config:
+    activate:
+      on-profile: local
+
+dynamodb:
+  endpoint: http://localhost:8000
+
+aws:
+  sns-topic-arn: ""   # deshabilitado en local
+  ses-identity-email: "test@example.com"

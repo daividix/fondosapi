@@ -1,0 +1,303 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: BTG Backend Infrastructure (ECS, DynamoDB, SNS, ALB, ECR)
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC ID donde desplegar ECS y ALB
+  SubnetId1:
+    Type: AWS::EC2::Subnet::Id
+    Description: subnets privadas/públicass
+  SubnetId2:
+    Type: AWS::EC2::Subnet::Id
+    Description: subnets privadas/públicass
+  ContainerPort:
+    Type: Number
+    Default: 8080
+  DesiredCount:
+    Type: Number
+    Default: 1
+  EcrRepoName:
+    Type: String
+    Default: fondosapi
+  ImageTag:
+    Type: String
+    Default: latest
+  EmailSender:
+    Type: String
+    Description: Email que envia las notificaciones
+
+Resources:
+
+  ### ---------------- DynamoDB ----------------
+  AccountsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Accounts
+      AttributeDefinitions:
+        - AttributeName: accountId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: accountId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  SubscriptionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Subscriptions
+      AttributeDefinitions:
+        - AttributeName: subscriptionId
+          AttributeType: S
+        - AttributeName: accountId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: subscriptionId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      GlobalSecondaryIndexes:
+        - IndexName: accountId-index
+          KeySchema:
+            - AttributeName: accountId
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+
+
+  TransactionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Transactions
+      AttributeDefinitions:
+        - AttributeName: transactionId
+          AttributeType: S
+        - AttributeName: accountId
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: transactionId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+      GlobalSecondaryIndexes:
+        - IndexName: accountId-index
+          KeySchema:
+            - AttributeName: accountId
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+
+  FundsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: Funds
+      AttributeDefinitions:
+        - AttributeName: fundId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: fundId
+          KeyType: HASH
+      BillingMode: PAY_PER_REQUEST
+
+  ### ---------------- SNS ----------------
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: btgpactual-notifications
+
+  ### ---------------- ECS Cluster ----------------
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: btgpactual-cluster
+
+  ### ---------------- IAM Role ----------------
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: btgpactual-ecs-task-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+
+  ECSTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess
+        - arn:aws:iam::aws:policy/AmazonSNSFullAccess
+      Policies:
+        - PolicyName: DynDbSnsSesPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:*
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref NotificationTopic
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                Resource: "*"
+
+  AppLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/btgpactual-fondosapi
+      RetentionInDays: 7
+
+  ### ---------------- Task Definition ----------------
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: btgpactual-fondosapi-task
+      Cpu: '512'
+      Memory: '1024'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt ECSTaskRole.Arn
+      ContainerDefinitions:
+        - Name: fondosapi
+          Image: !Sub "${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${EcrRepoName}:${ImageTag}"
+          PortMappings:
+            - ContainerPort: !Ref ContainerPort
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: /ecs/btgpactual-fondosapi
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            - Name: AWS_ACCOUNTS_TABLE
+              Value: !Ref AccountsTable
+            - Name: AWS_TRANSACTIONS_TABLE
+              Value: !Ref TransactionsTable
+            - Name: AWS_FUNDS_TABLE
+              Value: !Ref FundsTable
+            - Name: AWS_SNS_TOPIC_ARN
+              Value: !Ref NotificationTopic
+            - Name: AWS_SES_IDENTITY_EMAIL
+              Value: !Ref EmailSender
+            - Name: SPRING_PROFILES_ACTIVE
+              Value: prod
+
+  ### ---------------- Security Group ----------------
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ALB Security Group
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+
+  ServiceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ALB Security Group
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+
+  ### ---------------- ALB ----------------
+  ALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: btgpactual-fondosapi-alb
+      Subnets: [!Ref SubnetId1, !Ref SubnetId2]
+      SecurityGroups:
+        - !Ref ALBSecurityGroup
+      Scheme: internet-facing
+      Type: application
+
+  ALBTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      VpcId: !Ref VpcId
+      Protocol: HTTP
+      Port: 8080
+      TargetType: ip
+      HealthCheckProtocol: HTTP
+      HealthCheckPort: traffic-port
+      HealthCheckPath: /_health
+      HealthCheckIntervalSeconds: 30
+      HealthCheckTimeoutSeconds: 10
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 5
+
+  ALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref ALB
+      Protocol: HTTP
+      Port: 80
+      DefaultActions:
+        - Type: forward
+          TargetGroupArn: !Ref ALBTargetGroup
+
+  ### ---------------- ECS Service ----------------
+  ECSService:
+    Type: AWS::ECS::Service
+    DependsOn: ALBListener
+    Properties:
+      Cluster: !Ref ECSCluster
+      LaunchType: FARGATE
+      DesiredCount: !Ref DesiredCount
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          Subnets: [!Ref SubnetId1, !Ref SubnetId2]
+          SecurityGroups:
+            - !Ref ServiceSecurityGroup
+      TaskDefinition: !Ref TaskDefinition
+      LoadBalancers:
+        - ContainerName: fondosapi
+          ContainerPort: !Ref ContainerPort
+          TargetGroupArn: !Ref ALBTargetGroup
+      DeploymentConfiguration:
+        MinimumHealthyPercent: 0
+        MaximumPercent: 200
+      HealthCheckGracePeriodSeconds: 60
+
+Outputs:
+  BackendURL:
+    Description: URL del backend en ALB
+    Value: !Sub "http://${ALB.DNSName}"
+  AccountsTableName:
+    Value: !Ref AccountsTable
+  TransactionsTableName:
+    Value: !Ref TransactionsTable
+  FundsTableName:
+    Value: !Ref FundsTable
+  NotificationTopicArn:
+    Value: !Ref NotificationTopic

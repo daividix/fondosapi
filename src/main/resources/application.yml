@@ -1,0 +1,15 @@
+spring:
+  application:
+    name: fondosapi
+
+aws:
+  region: us-east-1
+  accounts-table: Accounts
+  transactions-table: Transactions
+  subscriptions-table: Subscriptions
+  funds-table: Funds
+  sns-topic-arn: ""   # set via env or CloudFormation output
+  ses-identity-email: "" # verified sender email for SES
+
+server:
+  port: 8080
