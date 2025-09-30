@@ -3,17 +3,19 @@
 ## Requisitios
 
 1.Java 17
+
 2.Maven
+
 3.docker-compose
 
 ## Ejecucion
 
-### Build
+### 1. Build
 ```bash
 mvn clean package -DskipTests
 ```
 
-### Ejecutar docker-compose
+### 2. Ejecutar docker-compose
 
 #### Linux
 ```bash
