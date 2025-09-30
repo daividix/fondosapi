@@ -4,7 +4,7 @@ spring:
       on-profile: local
 
 dynamodb:
-  endpoint: http://localhost:8000
+  endpoint: ${AWS_DYNAMODB_ENDPOINT:http://localhost:8000}
 
 aws:
   sns-topic-arn: ""   # deshabilitado en local

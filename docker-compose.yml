@@ -1,0 +1,44 @@
+version: "3.8"
+
+services:
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    container_name: dynamodb-local
+    ports:
+      - "8000:8000"
+    command: "-jar DynamoDBLocal.jar -sharedDb"
+    volumes:
+      - ./dynamodb-data:/home/dynamodblocal/data
+
+  init-dynamodb:
+    image: amazon/aws-cli:2.13.7
+    container_name: init-dynamodb
+    depends_on:
+      - dynamodb-local
+    volumes:
+      - ./init-dynamodb.sh:/init-dynamodb.sh
+    entrypoint: ["/bin/sh","-c"]
+    command: ["chmod +x /init-dynamodb.sh && /init-dynamodb.sh"]
+    environment:
+      AWS_ACCESS_KEY_ID: dummy
+      AWS_SECRET_ACCESS_KEY: dummy
+      AWS_REGION: us-east-1
+
+  backend:
+    build: .
+    container_name: fondosapi
+    ports:
+      - "8080:8080"
+    environment:
+      AWS_REGION: us-east-1
+      AWS_ACCESS_KEY_ID: dummy
+      AWS_SECRET_ACCESS_KEY: dummy
+      AWS_DYNAMODB_ENDPOINT: http://dynamodb-local:8000
+      AWS_ACCOUNTS_TABLE: Accounts
+      AWS_FUNDS_TABLE: Funds
+      AWS_TRANSACTIONS_TABLE: Transactions
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILE}
+      AWS_SUBSCRIPTIONS_TABLE: Subscriptions
+    depends_on:
+      - dynamodb-local
+      - init-dynamodb
