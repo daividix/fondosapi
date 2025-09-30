@@ -26,3 +26,5 @@ SPRING_PROFILE=local docker-compose up --build
 ```bash
 $env:SPRING_PROFILE="local";docker-compose up --build
 ```
+
+Endpoint: http://localhost:8080
